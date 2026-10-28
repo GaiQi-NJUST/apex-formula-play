@@ -1,0 +1,9 @@
+import * as THREE from '../vendor/build/three.module.js';
+import {mergeGeometries} from 'three/addons/utils/BufferGeometryUtils.js';
+// Bake static structures into small spatial batches. Cars, crew and light controls stay animated.
+export function batchEnvironment(scene,dynamicMaterials=[]){
+ const groups=new Map(),remove=[],canonical=new Map(),position=new THREE.Vector3();scene.updateMatrixWorld(true);
+ function visit(o){if(o.name==='pit_crew'||o.isInstancedMesh)return;if(o.isMesh){const m=o.material;if(Array.isArray(m)||m.isShaderMaterial||m.transparent||dynamicMaterials.includes(m)||m.vertexColors)return;let material=m;if(!m.map&&!m.normalMap&&!m.bumpMap&&!m.emissive?.getHex()){const key=[m.type,m.color?.getHex(),m.roughness,m.metalness,m.clearcoat,m.side].join(':');material=canonical.get(key)||m;canonical.set(key,material);}o.getWorldPosition(position);const key=material.uuid+':'+Math.floor(position.x/120)+':'+Math.floor(position.z/120)+':'+o.castShadow+':'+o.receiveShadow;let g=o.geometry.clone();if(g.index){const non=g.toNonIndexed();g.dispose();g=non;}for(const k of Object.keys(g.attributes))if(!['position','normal','uv'].includes(k))g.deleteAttribute(k);if(!g.attributes.uv)g.setAttribute('uv',new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count*2),2));g.applyMatrix4(o.matrixWorld);const batch=groups.get(key)||{material,geometries:[],objects:[],cast:o.castShadow,receive:o.receiveShadow};batch.geometries.push(g);batch.objects.push(o);groups.set(key,batch);return;}for(const c of o.children)visit(c);}
+ for(const o of scene.children)visit(o);
+ for(const b of groups.values()){if(b.objects.length<2){b.geometries.forEach(g=>g.dispose());continue;}const mesh=new THREE.Mesh(mergeGeometries(b.geometries,false),b.material);mesh.castShadow=b.cast;mesh.receiveShadow=b.receive;scene.add(mesh);b.objects.forEach(o=>remove.push(o));b.geometries.forEach(g=>g.dispose());}remove.forEach(o=>o.removeFromParent());
+}
