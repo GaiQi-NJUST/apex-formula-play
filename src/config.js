@@ -19,7 +19,7 @@ export const COMPOUNDS={
  W:{name:'全雨胎',color:'#78a7da',grip:.85,wear:1.4,target:64}
 };
 export const POINTS=[25,18,15,12,10,8,6,4,2,1,0,0];
-export const DEFAULTS={mode:'weekend',track:'coast',weather:'sunset',difficulty:'club',laps:5,team:0,compound:'M',requirePit:true,assist:true,quality:'high'};
+export const DEFAULTS={mode:'weekend',track:'coast',weather:'sunset',difficulty:'rookie',laps:5,team:0,compound:'M',requirePit:true,assist:true,beginner:true,quality:'high'};
 export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 export const wrap=(v,l)=>((v%l)+l)%l;
 export const angleDelta=(a,b)=>Math.atan2(Math.sin(a-b),Math.cos(a-b));

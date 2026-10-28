@@ -24,9 +24,10 @@ export async function createPhysics(circuit){
  function hold(car,enabled){if(car.kinematic===enabled)return;car.kinematic=enabled;car.body.setBodyType(enabled?RAPIER.RigidBodyType.KinematicPositionBased:RAPIER.RigidBodyType.Dynamic,true);car.body.setLinvel({x:0,y:0,z:0},true);car.body.setAngvel({x:0,y:0,z:0},true);}
  function grip(car,wet){const c=COMPOUNDS[car.compound],rain=car.compound==='I'||car.compound==='W';const temp=.76+.24*Math.exp(-(((car.temperature-c.target)/40)**2)),wear=1-.46*Math.pow(car.wear,1.4);const localWet=wet*(Math.abs(car.near.signed)<1.9?.74:1);let surface=rain?(.74+localWet*.3):(1-localWet*.74);if(car.compound==='I'&&wet>.7)surface*=.85;if(car.compound==='W'&&wet<.3)surface*=.82;const road=car.pit.state!=='track'?1:car.near.distance>8.2?.48:1;return clamp(c.grip*temp*wear*surface*road,.2,1.15);}
  function prepare(car,dt,wet,assist){
+  assist=assist||car.beginner;
   car.previousPosition.copy(car.position);if(car.kinematic)return;
   const control=car.control||{throttle:0,brake:1,steer:0},v=car.body.linvel(),q=car.body.rotation();car.rotation.set(q.x,q.y,q.z,q.w);car.forward.set(0,0,-1).applyQuaternion(car.rotation);car.right.set(1,0,0).applyQuaternion(car.rotation);car.velocity.set(v.x,v.y,v.z);const speed=Math.max(0,car.velocity.dot(car.forward)),g=grip(car,wet);
-  const steerLimit=assist?Math.min(.44/(1+speed*.027),Math.atan(3.2*32*g*(1+speed*speed*.00016)/Math.max(speed*speed,12))):.43/(1+speed*.028);car.steerLimit=steerLimit;car.steerAngle+=(clamp(control.steer,-1,1)*steerLimit-car.steerAngle)*(1-Math.exp(-dt*8));
+  const steerLimit=(assist?Math.min(.44/(1+speed*.027),Math.atan(3.2*32*g*(1+speed*speed*.00016)/Math.max(speed*speed,12))):.43/(1+speed*.028))*(car.beginner?.88:1);car.steerLimit=steerLimit;car.steerAngle+=(clamp(control.steer,-1,1)*steerLimit-car.steerAngle)*(1-Math.exp(-dt*(car.beginner?5:8)));
   const boost=control.boost&&car.battery>1&&control.throttle>.4&&speed>5&&car.pit.state==='track';car.boosting=!!boost;car.activeAero=car.pit.state==='track'&&speed>38&&Math.abs(control.steer)<.12&&control.brake<.1;
   const strategy=car.energyMode==='recharge'?.83:car.energyMode==='attack'&&car.battery>3?1.12:1;
   const damage=1-car.damage*.004,engine=(13700/(1+speed*.014))*(control.throttle||0)*damage*strategy+(boost?3400+(car.overtakeReady?1000:0):0),dragFactor=car.activeAero?.42:.63;

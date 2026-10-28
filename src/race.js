@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/build/three.module.js';
-import {createPhysics} from './physics.js';
-import {TEAMS,COMPOUNDS,DEFAULTS,POINTS,clamp,wrap} from './config.js';
+import {createPhysics} from './physics.js?v=school1';
+import {TEAMS,COMPOUNDS,DEFAULTS,POINTS,clamp,wrap} from './config.js?v=school1';
+import {contactDamage,assistDriver} from './driving-assist.js?v=school1';
 
 const up=new THREE.Vector3(0,1,0);
 function fresh(id,team){return {id,team,name:id===0?'YOU':TEAMS[team].drivers[id%2],number:27+id*3,compound:'M',temperature:58,wear:0,battery:100,damage:0,wingDamage:0,penalty:0,collisions:0,hitCooldown:0,lap:0,nextGate:0,startedLap:false,lapStart:0,bestLap:Infinity,lastLap:0,sectors:[],sectorStart:0,sectorTimes:[],progress:-20,finished:false,retired:false,finishTime:Infinity,invalidLap:false,offtrackTime:0,offtrackWarned:false,stuck:0,lastSafeS:0,steerAngle:0,brake:0,boosting:false,activeAero:false,gear:'N',speed:0,pitStops:0,control:{throttle:0,brake:1,steer:0},pit:{state:'track',requested:false,compound:'M',fixWing:true,fixDamage:true,remaining:0,stage:null,stageProgress:0,completed:[],box:0,clock:0},lapTrace:[],traceClock:0,rank:id+1};}
@@ -15,27 +16,30 @@ export async function createRace(circuit,options={},onEvent=()=>{}){
  function resetCar(c,index){const team=c.team;Object.assign(c,fresh(c.id,team));c.compound=config.compound;c.pit.compound=config.compound;c.progress=-12-Math.floor(index/2)*8;c.lastSafeS=c.progress;physics.hold(c,false);physics.placeOnTrack(c,c.progress,index%2?3:-3);c.aiClock=0;c.aiControl=null;c.passTarget=undefined;c.passLane=undefined;c.raceLane=index%2?2.1:-2.1;}
  function resetSession(){race.time=0;race.sessionElapsed=0;race.sessionRemaining=90;race.vscUntil=0;race.yellowUntil=0;race.flag='GREEN';race.sessionResult=null;race.finishedRace=false;race.replay=[];race.replayClock=0;race.events=[];roster.forEach((c,i)=>resetCar(c,i));}
  function begin(session='practice'){
-  resetSession();race.phase=session;race.neutralOrder=null;if(session==='qualifying')race.sessionRemaining=180;
+  resetSession();race.tutorial=session==='tutorial';race.phase=race.tutorial?'practice':session;race.neutralOrder=null;if(session==='qualifying')race.sessionRemaining=180;
   if(session==='grid'){
    race.countdown=6.3;const ordered=race.qualifying.length?race.qualifying.map(id=>roster[id]):[...roster.slice(1),roster[0]];race.gridOrder=ordered;ordered.forEach((c,i)=>resetCar(c,i));event('LIGHTS','五灯熄灭后出发','抢跑将受到 5 秒处罚',3);
   }else if(session==='qualifying')event('QUALIFYING','排位赛开始','180 秒内争取最快有效圈；可在菜单跳过',3);
   else if(session==='trial')event('TIME ATTACK','计时赛开始','完整有效圈将保存为最佳圈幽灵',2);
   else event('PRACTICE','练习赛道','熟悉刹车点；B 预约进站，R 呼叫救援',2);
-  if(session==='trial'){roster.slice(1).forEach(c=>{c.retired=true;physics.hold(c,true);physics.placeOnTrack(c,circuit.length*.45+c.id*9,30);});}
+  if(session==='trial'||race.tutorial){roster.slice(1).forEach(c=>{c.retired=true;physics.hold(c,true);physics.placeOnTrack(c,circuit.length*.45+c.id*9,30);});}
+  if(race.tutorial){race.sessionRemaining=Infinity;resetTutorialCar();}
  }
  function nextSession(){if(race.phase==='practice'||race.sessionResult?.kind==='practice')begin('qualifying');else if(race.phase==='qualifying'||race.sessionResult?.kind==='qualifying')begin('grid');}
  function skipToRace(){race.qualifying=[...roster.slice(1).sort((a,b)=>a.id-b.id),roster[0]].map(c=>c.id);begin('grid');}
  function bookPit(c=race.player,choices={}){Object.assign(c.pit,{requested:true,compound:choices.compound||c.pit.compound,fixWing:choices.fixWing??true,fixDamage:choices.fixDamage??true});event('BOX BOX','进站已预约',`${COMPOUNDS[c.pit.compound].name} · 到入口后自动接管，维修时比赛继续`,2);}
- function rescue(c=race.player){if(c.retired||c.finished||['service','rescue'].includes(c.pit.state)||!['race','practice','qualifying','trial'].includes(race.phase))return false;c.pit.state='rescue';c.pit.stuck=0;c.pit.remaining=18;c.pit.clock=0;c.pit.requested=true;c.control={throttle:0,brake:1,steer:0};c.invalidLap=true;physics.hold(c,true);race.vscUntil=Math.max(race.vscUntil,race.time+18);if(c.id===0)event('RECOVERY','救援正在赶来','等待 18 秒；比赛继续，随后在维修区处理车损',3);return true;}
+ function resetTutorialCar(){if(!race.tutorial)return false;const c=race.player;physics.hold(c,false);Object.assign(c,{damage:0,wingDamage:0,temperature:88,wear:0,battery:100,retired:false,finished:false,hitCooldown:1.5,assistClock:0,invalidLap:true});c.pit.state='track';c.pit.requested=false;c.control={throttle:0,brake:1,steer:0};physics.placeOnTrack(c,60,0);return true;}
+ function rescue(c=race.player){if(race.tutorial&&c.id===0)return resetTutorialCar();if(c.retired||c.finished||['service','rescue'].includes(c.pit.state)||!['race','practice','qualifying','trial'].includes(race.phase))return false;c.pit.state='rescue';c.pit.stuck=0;c.pit.remaining=18;c.pit.clock=0;c.pit.requested=true;c.control={throttle:0,brake:1,steer:0};c.invalidLap=true;physics.hold(c,true);race.vscUntil=Math.max(race.vscUntil,race.time+18);if(c.id===0)event('RECOVERY','救援正在赶来','等待 18 秒；比赛继续，随后在维修区处理车损',3);return true;}
  function retire(c,reason){if(c.retired)return;c.retired=true;c.control={throttle:0,brake:1,steer:0};physics.hold(c,true);race.yellowUntil=race.time+15;race.yellowS=c.s;if(c.id===0)event('DNF','赛车退赛',reason,4);}
  function collision(a,b,impact,normal){
-  if(a.hitCooldown>0||a.retired||a.kinematic)return;const damage=clamp((impact-2.5)*1.5,2,32);for(const c of b?[a,b]:[a]){if(c.hitCooldown>0||c.retired||c.finished||c.kinematic)continue;c.damage=clamp(c.damage+damage,0,100);c.wingDamage=clamp(c.wingDamage+damage*.014,0,1);c.collisions++;c.hitCooldown=.65;c.invalidLap=true;if(c.damage>=100)retire(c,'悬挂或动力系统损坏过重');}
+  if(a.hitCooldown>0||a.retired||a.kinematic)return;for(const c of b?[a,b]:[a]){if(c.hitCooldown>0||c.retired||c.finished||c.kinematic)continue;const protectedCar=c.id===0&&(config.beginner||race.tutorial),damage=contactDamage(impact,protectedCar,race.tutorial);c.damage=clamp(c.damage+damage,0,protectedCar?85:100);c.wingDamage=clamp(c.wingDamage+damage*.014,0,protectedCar?.5:1);c.collisions++;c.hitCooldown=protectedCar?1.35:.65;if(damage>0)c.invalidLap=true;if(c.damage>=100)retire(c,'悬挂或动力系统损坏过重');}
+  if(race.tutorial){onEvent({type:'collision',car:a,other:b,impact,normal,position:a.position.clone(),time:race.time});return;}
   race.yellowUntil=race.time+9;race.yellowS=a.s;if(impact>17&&race.time-race.lastVSC>25){race.vscUntil=race.time+18;race.lastVSC=race.time;event('VIRTUAL SAFETY CAR','虚拟安全车','全场限速，禁止超车；事故处理后恢复绿旗',3);}
   onEvent({type:'collision',car:a,other:b,impact,normal,position:a.position.clone(),time:race.time});if(a.id===0||b?.id===0)event('CONTACT','发生接触',`车损 ${Math.round(race.player.damage)}% · 前翼 ${Math.round(race.player.wingDamage*100)}%`,3);
  }
  function aim(c,target,targetSpeed,boost=false){const delta=target.clone().sub(c.position),distance=Math.max(1,Math.hypot(delta.x,delta.z)),angle=Math.atan2(delta.dot(c.right),delta.dot(c.forward)),desired=Math.atan2(6.4*Math.sin(angle),distance),limit=Math.max(.02,c.steerLimit||.12);const error=targetSpeed-c.speed;return {steer:clamp(desired/limit,-1,1),throttle:clamp(error*.3+.12,0,1),brake:clamp(-error*.13,0,1),boost};}
  function aiInput(c){
-  const pace=config.difficulty==='pro'?1.04:config.difficulty==='rookie'?.81:.94,s=c.s,g=physics.grip(c,race.wetness);let speedLimit=(77+c.id%3)*pace;
+  const pace=config.difficulty==='pro'?1.04:config.difficulty==='rookie'?.72:.94,s=c.s,g=physics.grip(c,race.wetness);let speedLimit=(77+c.id%3)*pace;
   for(const d of [0,8,18,30,48,70,100,140,190]){const a=circuit.frame(s+d-4).forward,b=circuit.frame(s+d+4).forward,k=Math.acos(clamp(a.dot(b),-1,1))/8,corner=Math.sqrt((8.8*g*pace)/(k+.0002));speedLimit=Math.min(speedLimit,Math.sqrt(corner*corner+2*11*g*Math.max(0,d-15)));}
   if(c.passTarget!==undefined){const passed=roster[c.passTarget];if(!passed||circularDiff(c.s,passed.s)>9||race.time>c.passUntil){c.raceLane=c.passLane??c.raceLane;c.passTarget=undefined;c.passLane=undefined;}}
   let lane=race.time<4?c.near.signed:(c.passLane??c.raceLane??(c.id%2?2.1:-2.1));
@@ -85,7 +89,7 @@ export async function createRace(circuit,options={},onEvent=()=>{}){
   const f=circuit.frame(c.nextGate/12*circuit.length),a=c.previousPosition.clone().sub(f.p).dot(f.forward),b=c.position.clone().sub(f.p).dot(f.forward),width=c.nextGate===0&&c.pit.state!=='track'?35:10.3;
   if(a<-.0001&&b>=0&&Math.abs(c.position.clone().sub(f.p).dot(f.right))<width){
    const crossTime=race.time-dt+dt*clamp(-a/(b-a),0,1),gate=c.nextGate;c.nextGate=(gate+1)%12;
-   if(gate===0){if(c.startedLap){const t=crossTime-c.lapStart;c.lastLap=t;c.lap++;if(!c.invalidLap&&t>8){c.bestLap=Math.min(c.bestLap,t);if(c.id===0&&t<race.bestGhostTime){race.bestGhostTime=t;race.bestGhost=c.lapTrace.map(v=>v.slice());onEvent({type:'bestLap',time:t,ghost:race.bestGhost,track:config.track});event('FASTEST LAP','新的个人最快圈',t.toFixed(3)+' 秒',3);}}c.sectors[2]=crossTime-c.sectorStart;c.lapTrace=[];c.invalidLap=false;if(race.phase==='race'&&c.lap>=config.laps)finishCar(c,crossTime);}
+   if(gate===0){if(c.startedLap){const t=crossTime-c.lapStart;c.lastLap=t;c.lap++;if(!race.tutorial&&!c.invalidLap&&t>8){c.bestLap=Math.min(c.bestLap,t);if(c.id===0&&t<race.bestGhostTime){race.bestGhostTime=t;race.bestGhost=c.lapTrace.map(v=>v.slice());onEvent({type:'bestLap',time:t,ghost:race.bestGhost,track:config.track});event('FASTEST LAP','新的个人最快圈',t.toFixed(3)+' 秒',3);}}c.sectors[2]=crossTime-c.sectorStart;c.lapTrace=[];c.invalidLap=false;if(race.phase==='race'&&c.lap>=config.laps)finishCar(c,crossTime);}
     else c.startedLap=true;c.lapStart=crossTime;c.sectorStart=crossTime;c.sectorTimes=[];
    }else if(gate===4||gate===8){c.sectors[gate===4?0:1]=crossTime-c.sectorStart;c.sectorStart=crossTime;}
   }
@@ -104,10 +108,13 @@ export async function createRace(circuit,options={},onEvent=()=>{}){
   if(config.weather==='rain'){const raining=race.time%240<150,nextWeather=raining?'rain':'sunny';if(race.weather!==nextWeather){race.weather=nextWeather;event('WEATHER',raining?'雨势重新增强':'雨停，赛道正在变干',raining?'注意湿地刹车距离，可预约半雨胎或全雨胎':'赛车线先恢复抓地，关注胎温与换干胎时机',3);}const desired=raining?.64:.04;race.wetness+=(desired-race.wetness)*dt*.014;}else race.wetness=Math.max(0,race.wetness-dt*.0003);
   race.flag=race.vscUntil>race.time?'VSC':race.yellowUntil>race.time?'YELLOW':'GREEN';if(race.flag==='GREEN'){race.neutralOrder=null;race.neutralPenalties=new Set();}else if(!race.neutralOrder){race.neutralOrder=new Map(roster.map(c=>[c.id,c.progress]));race.neutralPenalties=new Set();}
   for(const c of roster){
+   c.beginner=c.id===0&&(!!config.beginner||!!race.tutorial);
    let control;if(c.retired||c.finished)control={throttle:0,brake:1,steer:0};else if(c.id===0&&!race.autopilot)control={...input};else{c.aiClock=(c.aiClock||0)-dt;if(c.aiClock<=0||!c.aiControl){c.aiClock=1/30;c.aiControl=aiInput(c);}control={...c.aiControl};}
    if(grid&&(c.id!==0||race.autopilot))control={throttle:0,brake:1,steer:0};
    if(c.retired)control={throttle:0,brake:1,steer:0};else if(c.finished){control=aiInput(c);control.boost=false;if(c.speed>30){control.throttle=0;control.brake=Math.max(control.brake,.45);}}
    if(c.id>0&&!c.finished&&!c.retired&&race.phase==='race'&&c.pit.state==='track'&&!c.pit.requested&&(c.wear>.48||c.damage>43||c.wingDamage>.5||config.requirePit&&c.lap>=Math.max(1,Math.floor(config.laps*.45))&&c.pitStops===0)){c.pit.requested=true;c.pit.compound=race.wetness>.4?'I':c.compound==='S'?'M':'H';}
+   if(c.id===0&&c.beginner&&!race.autopilot&&!grid&&!c.retired&&!c.finished&&c.pit.state==='track'&&!c.pit.requested)control=assistDriver(c,control,circuit,dt,physics.grip(c,race.wetness),race.tutorial);
+   else c.brakeAssist=false;
    if(c.pit.state!=='track'||c.pit.requested)control=pitUpdate(c,dt,control)||control;
    if(race.flag==='VSC'&&c.speed>22){control.throttle=0;control.brake=Math.max(control.brake,.6);}
    c.overtakeReady=c.pit.state==='track'&&Math.abs(c.steerAngle)<.035&&roster.some(o=>o!==c&&!o.retired&&o.progress>c.progress&&o.progress-c.progress<Math.max(15,c.speed));c.control=control;
@@ -118,7 +125,7 @@ export async function createRace(circuit,options={},onEvent=()=>{}){
    if(grid&&c.id===0&&c.speed>1.3&&!c.jumpPenalty){c.jumpPenalty=true;c.penalty+=5;event('FALSE START','抢跑 +5 秒','处罚将在最终成绩中计入',3);}
    crossGate(c,dt);updateResources(c,dt);
    if(c.pit.state==='track'&&!c.finished){
-    if(c.near.distance>8.4){c.offtrackTime+=dt;c.invalidLap=true;if(c.offtrackTime>2.5&&!c.offtrackWarned){c.offtrackWarned=true;c.penalty+=5;if(c.id===0)event('TRACK LIMITS','超出赛道边界 +5 秒','本圈不计入最快圈；请返回赛道',3);}}
+    if(c.near.distance>8.4){c.offtrackTime+=dt;c.invalidLap=true;if(!race.tutorial&&c.offtrackTime>2.5&&!c.offtrackWarned){c.offtrackWarned=true;c.penalty+=5;if(c.id===0)event('TRACK LIMITS','超出赛道边界 +5 秒','本圈不计入最快圈；请返回赛道',3);}}
     else{c.offtrackTime=0;c.offtrackWarned=false;c.lastSafeS=c.s;}
     if(c.speed<2)c.stuck+=dt;else c.stuck=0;if(c.id>0&&c.stuck>10||c.position.y<-15)rescue(c);
    }
@@ -129,5 +136,5 @@ export async function createRace(circuit,options={},onEvent=()=>{}){
   profiling.control+=(beforePhysics-stamp-profiling.control)*.03;profiling.physics+=(afterPhysics-beforePhysics-profiling.physics)*.03;profiling.after+=(performance.now()-afterPhysics-profiling.after)*.03;
   if(race.phase==='race'&&(roster.every(c=>c.finished||c.retired)||race.finishedRace&&race.time>race.finishDeadline||race.player.retired&&race.time-race.lastVSC>5))endSession('race');
  }
- return Object.assign(race,{profiling,begin,nextSession,skipToRace,bookPit,rescue,step,rank,endSession,aiInput,finishCar,retire,dispose(){physics.dispose();}});
+ return Object.assign(race,{profiling,begin,nextSession,skipToRace,bookPit,rescue,resetTutorialCar,step,rank,endSession,aiInput,finishCar,retire,dispose(){physics.dispose();}});
 }
